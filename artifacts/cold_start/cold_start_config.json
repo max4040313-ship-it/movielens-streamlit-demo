@@ -1,0 +1,6 @@
+{
+  "method": "ridge",
+  "alpha": 10.0,
+  "fit_intercept": true,
+  "seed": 42
+}

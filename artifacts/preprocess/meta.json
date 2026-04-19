@@ -1,0 +1,10 @@
+{
+  "seed": 42,
+  "test_ratio": 0.2,
+  "n_users": 6040,
+  "n_movies": 3706,
+  "n_genres": 18,
+  "include_zip": false,
+  "zip_prefix_len": null,
+  "output_format": "parquet"
+}

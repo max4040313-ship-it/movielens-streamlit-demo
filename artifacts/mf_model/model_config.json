@@ -1,0 +1,11 @@
+{
+  "latent_dim": 64,
+  "epochs": 20,
+  "lr": 0.01,
+  "reg": 0.02,
+  "use_bias": true,
+  "seed": 42,
+  "shuffle_each_epoch": true,
+  "clip_grad": 5.0,
+  "eval_every": 1
+}
