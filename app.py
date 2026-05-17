@@ -9,12 +9,22 @@ PREPROCESS_DIR = "artifacts/preprocess"
 MF_MODEL_DIR = "artifacts/mf_model"
 COLD_START_DIR = "artifacts/cold_start"
 
-st.set_page_config(page_title="Cold-start Recommender Demo", layout="wide")
-st.title("Cold-start Recommender + Counterfactual Explanation (Demo)")
+st.set_page_config(page_title="冷啟動推薦系統示範", layout="wide")
 
+# ---------------------------
+# Session state 初始化
+# ---------------------------
+if "page" not in st.session_state:
+    st.session_state.page = "form"
+
+if "user_profile" not in st.session_state:
+    st.session_state.user_profile = {}
+
+# ---------------------------
+# 載入可選項
+# ---------------------------
 @st.cache_data
 def load_choices():
-    # 用 encoders / users_df 取出可用的 age/occupation
     _, _, _, encoders, _ = load_preprocess_artifacts(PREPROCESS_DIR)
     spec = DemoEncoderSpec.load(f"{COLD_START_DIR}/demo_encoder.json")
     ages = sorted([int(k) for k in spec.age_vocab.keys()])
@@ -22,6 +32,9 @@ def load_choices():
     genders = sorted(list(spec.gender_vocab.keys()))
     return genders, ages, occs, encoders
 
+# ---------------------------
+# 工具函式
+# ---------------------------
 def top_genres_list(result):
     return [(x["genre"], float(x["score"])) for x in result["top_genres"]]
 
@@ -55,9 +68,10 @@ def counterfactual_explain(gender, age, occupation, top_m_pool, top_k_genres, to
     base_top = top_genres_list(base)
     base_top1 = base_top[0][0] if base_top else None
 
-    genders, ages, occs, _ = load_choices()
+    _, ages, occs, _ = load_choices()
 
     best = None  # (cost, change_desc, new_result)
+
     # 只改 occupation（成本 1）
     for occ2 in occs:
         if occ2 == occupation:
@@ -65,7 +79,7 @@ def counterfactual_explain(gender, age, occupation, top_m_pool, top_k_genres, to
         r2 = run_infer(gender, age, occ2, top_m_pool, top_k_genres, top_n_movies)
         top2 = top_genres_list(r2)
         if top2 and top2[0][0] != base_top1:
-            best = (1, f"occupation: {occupation} → {occ2}", r2)
+            best = (1, f"職業：{occupation} → {occ2}", r2)
             break
 
     # 只改 age（成本 2），只有在 occupation 找不到時才用
@@ -76,72 +90,156 @@ def counterfactual_explain(gender, age, occupation, top_m_pool, top_k_genres, to
             r2 = run_infer(gender, age2, occupation, top_m_pool, top_k_genres, top_n_movies)
             top2 = top_genres_list(r2)
             if top2 and top2[0][0] != base_top1:
-                best = (2, f"age: {age} → {age2}", r2)
+                best = (2, f"年齡：{age} → {age2}", r2)
                 break
 
     return base, best
 
-# Sidebar inputs
-with st.sidebar:
-    st.header("New user demographics")
+# ---------------------------
+# 第一頁：填寫基本資料
+# ---------------------------
+if st.session_state.page == "form":
+    st.title("新用戶您好")
+    st.subheader("請先填寫基本資料")
+
     genders, ages, occs, encoders = load_choices()
 
-    gender = st.selectbox("Gender", genders, index=0)
-    age = st.selectbox("Age (bucket code)", ages, index=0)
-    occupation = st.selectbox("Occupation (code)", occs, index=0)
+    # 顯示中文，實際傳給模型仍然是 F / M
+    gender_map = {
+        "女": "F",
+        "男": "M"
+    }
 
-    st.divider()
-    st.header("Display settings")
-    top_m_pool = st.slider("Top-M pooling per genre", 5, 100, 10)
-    top_k_genres = st.slider("Top-K genres", 3, 20, 10)
-    top_n_movies = st.slider("Top-N movies per genre", 1, 30, 5)
+    gender_label = st.selectbox("性別", list(gender_map.keys()), index=0)
+    gender = gender_map[gender_label]
 
-    run_btn = st.button("Recommend")
+    age = st.selectbox("年齡", ages, index=0)
+    occupation = st.selectbox("職業）", occs, index=0)
 
-if run_btn:
+    st.subheader("透明度選擇")
+    transparency_level = st.selectbox(
+        "透明度條件",
+        ["低透明度", "中透明度", "高透明度"],
+        index=0
+    )
+
+    st.subheader("顯示設定")
+    top_m_pool = st.slider("每個類型取前 M 部電影", 5, 100, 10)
+    top_k_genres = st.slider("前 K 個推薦類型", 3, 20, 10)
+    top_n_movies = st.slider("每個類型顯示前 N 部電影", 1, 30, 5)
+
+    if st.button("登入"):
+        st.session_state.user_profile = {
+            "gender": gender,
+            "age": age,
+            "occupation": occupation,
+            "transparency_level": transparency_level,
+            "top_m_pool": top_m_pool,
+            "top_k_genres": top_k_genres,
+            "top_n_movies": top_n_movies,
+        }
+        st.session_state.page = "result"
+        st.rerun()
+
+# ---------------------------
+# 第二頁：推薦結果頁
+# ---------------------------
+elif st.session_state.page == "result":
+    profile = st.session_state.user_profile
+
+    gender = profile["gender"]
+    age = profile["age"]
+    occupation = profile["occupation"]
+    transparency_level = profile["transparency_level"]
+    top_m_pool = profile["top_m_pool"]
+    top_k_genres = profile["top_k_genres"]
+    top_n_movies = profile["top_n_movies"]
+
+    gender_text = "女" if gender == "F" else "男"
+
+    st.title("推薦結果")
+
+    if st.button("返回上一頁"):
+        st.session_state.page = "form"
+        st.rerun()
+
     col1, col2 = st.columns([1, 1])
 
-    # --- Base recommendation ---
+    # ---------------------------
+    # 左邊：推薦結果
+    # ---------------------------
     with col1:
-        st.subheader("Recommendation")
-        result = run_infer(gender, age, occupation, top_m_pool, top_k_genres, top_n_movies)
+        st.subheader("推薦內容")
+
+        result = run_infer(
+            gender, age, occupation,
+            top_m_pool, top_k_genres, top_n_movies
+        )
         top = top_genres_list(result)
 
-        st.write("**Top genres**")
-        st.table([{"genre": g, "score": round(s, 4)} for g, s in top])
+        st.write("**推薦類型**")
+        st.table([{"類型": g, "分數": round(s, 4)} for g, s in top])
 
-        st.write("**Representative movies**")
+        st.write("**代表電影**")
         for item in result["top_genres"]:
             g = item["genre"]
             st.markdown(f"### {g}")
             rows = result["genre_top_movies"][g]
-            st.table([{"movie_idx": r["movie_idx"], "score": round(r["score"], 4), "title": r["title"]} for r in rows])
+            st.table([
+                {
+                    "電影編號": r["movie_idx"],
+                    "分數": round(r["score"], 4),
+                    "片名": r["title"]
+                }
+                for r in rows
+            ])
 
-    # --- Counterfactual explanation ---
+    # ---------------------------
+    # 右邊：解釋區塊
+    # ---------------------------
     with col2:
-        st.subheader("Counterfactual explanation (minimal change)")
-        base, best = counterfactual_explain(gender, age, occupation, top_m_pool, top_k_genres, top_n_movies)
-        base_top = top_genres_list(base)
+        st.subheader("解釋說明")
 
-        if best is None:
-            st.info("找不到只改一個欄位就能改變 Top-1 genre 的反事實（在目前設定下）。")
-        else:
-            cost, change_desc, cf = best
-            cf_top = top_genres_list(cf)
+        if transparency_level == "低透明度":
+            st.info("此條件僅顯示推薦結果，不提供額外解釋。")
 
-            st.write(f"**Minimal change:** {change_desc}  (cost={cost})")
-            st.write(f"**Top-1 before:** {base_top[0][0]}  →  **Top-1 after:** {cf_top[0][0]}")
+        elif transparency_level == "中透明度":
+            st.write("**程序解釋**")
+            st.write(
+                f"系統根據使用者的人口統計資料（性別={gender_text}、年齡={age}、職業={occupation}）"
+                "預測其偏好向量，並依此產生推薦類型與代表電影。"
+            )
 
-            j = jaccard_topk(base_top, cf_top, k=min(10, len(base_top), len(cf_top)))
-            st.write(f"**Top-10 Jaccard similarity:** {j:.3f}  (越低代表改變越大)")
+        elif transparency_level == "高透明度":
+            st.write("**程序解釋**")
+            st.write(
+                f"系統根據使用者的人口統計資料（性別={gender_text}、年齡={age}、職業={occupation}）"
+                "預測其偏好向量，並依此產生推薦類型與代表電影。"
+            )
 
-            st.write("**Before vs After (Top genres)**")
-            c1, c2 = st.columns(2)
-            with c1:
-                st.caption("Before")
-                st.table([{"genre": g, "score": round(s, 4)} for g, s in base_top])
-            with c2:
-                st.caption("After")
-                st.table([{"genre": g, "score": round(s, 4)} for g, s in cf_top])
-else:
-    st.write("在左側選擇 demographics，按 **Recommend** 產生推薦與反事實解釋。")
+            st.write("**反事實解釋**")
+            base, best = counterfactual_explain(
+                gender, age, occupation,
+                top_m_pool, top_k_genres, top_n_movies
+            )
+
+            if best is None:
+                st.warning("找不到可改變第一推薦類型的單一人口特徵反事實。")
+            else:
+                cost, change_desc, new_result = best
+
+                base_top = top_genres_list(base)
+                new_top = top_genres_list(new_result)
+
+                base_top1 = base_top[0][0] if base_top else "N/A"
+                new_top1 = new_top[0][0] if new_top else "N/A"
+                jacc = jaccard_topk(base_top, new_top, k=top_k_genres)
+
+                st.write(f"最小改動：{change_desc}")
+                st.write(f"改動成本：{cost}")
+                st.write(f"原始第一推薦類型：{base_top1}")
+                st.write(f"反事實第一推薦類型：{new_top1}")
+                st.write(f"賈卡德相似係數：{jacc:.4f}")
+
+                st.write("**反事實後推薦類型**")
+                st.table([{"類型": g, "分數": round(s, 4)} for g, s in new_top])
