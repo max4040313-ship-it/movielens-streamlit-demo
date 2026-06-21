@@ -1,8 +1,9 @@
 import random
 from contextlib import contextmanager
+from html import escape
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -13,12 +14,12 @@ from movielens_train_mf import load_preprocess_artifacts
 PREPROCESS_DIR = "artifacts/preprocess"
 MF_MODEL_DIR = "artifacts/mf_model"
 COLD_START_DIR = "artifacts/cold_start"
+POSTERS_CSV = "movie_posters.csv"
+POSTER_ASPECT_RATIO = "2 / 3"
 
 TOP_M_POOL = 50
 TOP_K_GENRES = 5
 TOP_N_MOVIES = 5
-SCORE_LABEL = "推薦分數"
-
 VERSION_TYPES = ["low", "medium", "high"]
 VERSION_LABELS = ["A", "B", "C"]
 
@@ -76,6 +77,24 @@ def load_choices() -> Tuple[List[str], List[int], List[int], Dict[str, Any]]:
     return genders, ages, occupations, encoders
 
 
+def map_age_to_model_bucket(age: int, supported_ages: List[int]) -> int:
+    age_value = int(age)
+    age_buckets = sorted(int(value) for value in supported_ages)
+    bucket = age_buckets[0]
+    for candidate in age_buckets:
+        if age_value >= candidate:
+            bucket = candidate
+        else:
+            break
+    return bucket
+
+
+def format_age_display(age: int, model_age: int) -> str:
+    if int(age) == int(model_age):
+        return str(int(age))
+    return f"{int(age)}（模型分組：{int(model_age)}）"
+
+
 def init_session_state() -> None:
     defaults = {
         "page": "form",
@@ -121,37 +140,85 @@ def format_score(score: float) -> str:
 
 
 def render_score_text(score: float) -> None:
-    st.write(f"{SCORE_LABEL}：**{format_score(score)}**")
+    st.write(f"建議分數：**{format_score(score)}**")
+
+
+def poster_lookup_key(title: Any) -> str:
+    if title is None or pd.isna(title):
+        return ""
+    return " ".join(str(title).strip().casefold().split())
+
+
+def poster_file_mtime(path: str) -> float:
+    poster_path = Path(path)
+    return poster_path.stat().st_mtime if poster_path.exists() else 0.0
+
+
+def render_poster_image(poster_url: str, title: str) -> None:
+    safe_url = escape(poster_url, quote=True)
+    safe_title = escape(title, quote=True)
+    st.markdown(
+        f"""
+        <div style="width: 100%; aspect-ratio: {POSTER_ASPECT_RATIO}; overflow: hidden; border-radius: 0.5rem;">
+            <img
+                src="{safe_url}"
+                alt="{safe_title}"
+                style="width: 100%; height: 100%; object-fit: cover; display: block;"
+            />
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_empty_poster_slot() -> None:
+    st.markdown(
+        f'<div style="width: 100%; aspect-ratio: {POSTER_ASPECT_RATIO};"></div>',
+        unsafe_allow_html=True,
+    )
 
 
 @st.cache_data
-def placeholder_image(key: str, height: int = 110, width: int = 180) -> np.ndarray:
-    base_colors = [
-        (235, 240, 243),
-        (232, 238, 242),
-        (237, 239, 234),
-        (239, 236, 232),
-        (233, 240, 238),
-    ]
-    accent_colors = [
-        (185, 204, 211),
-        (196, 207, 214),
-        (190, 205, 196),
-        (210, 198, 188),
-        (184, 205, 202),
-    ]
-    color_index = sum(ord(char) for char in key) % len(base_colors)
-    image = np.full((height, width, 3), base_colors[color_index], dtype=np.uint8)
+def load_movie_posters(path: str, modified_time: float) -> Dict[str, str]:
+    del modified_time
+    poster_path = Path(path)
+    if not poster_path.exists():
+        return {}
 
-    border = 4
-    image[:border, :, :] = accent_colors[color_index]
-    image[-border:, :, :] = accent_colors[color_index]
-    image[:, :border, :] = accent_colors[color_index]
-    image[:, -border:, :] = accent_colors[color_index]
+    try:
+        posters_df = pd.read_csv(poster_path)
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
+        return {}
 
-    band_top = int(height * 0.64)
-    image[band_top : band_top + 8, border:-border, :] = accent_colors[color_index]
-    return image
+    if "poster_url" not in posters_df.columns:
+        return {}
+
+    posters: Dict[str, str] = {}
+    for _, row in posters_df.iterrows():
+        poster_url = row.get("poster_url", "")
+        if pd.isna(poster_url) or not str(poster_url).strip():
+            continue
+        poster_url = str(poster_url).strip()
+
+        for title_col in ("title", "movie_title"):
+            if title_col not in posters_df.columns:
+                continue
+            key = poster_lookup_key(row.get(title_col, ""))
+            if key:
+                posters.setdefault(key, poster_url)
+
+        if "movie_title" in posters_df.columns and "year" in posters_df.columns:
+            movie_title = row.get("movie_title", "")
+            year = row.get("year", "")
+            if not pd.isna(movie_title) and not pd.isna(year):
+                year_text = str(year).strip()
+                if year_text.endswith(".0"):
+                    year_text = year_text[:-2]
+                key = poster_lookup_key(f"{movie_title} ({year_text})")
+                if key:
+                    posters.setdefault(key, poster_url)
+
+    return posters
 
 
 def run_infer(gender: str, age: int, occupation: int) -> Dict[str, Any]:
@@ -195,7 +262,7 @@ def render_profile_summary(profile: Dict[str, Any]) -> None:
         cols = st.columns(3)
         entries = [
             ("性別", profile["gender_label"]),
-            ("年齡", str(profile["age"])),
+            ("年齡", profile.get("age_display", str(profile["age"]))),
             ("職業", profile["occupation_label"]),
         ]
         for col, (label, value) in zip(cols, entries):
@@ -219,6 +286,7 @@ def render_genre_recommendations(result: Dict[str, Any]) -> None:
 def render_movie_sections(result: Dict[str, Any]) -> None:
     with section_container():
         st.subheader("推薦電影清單")
+        posters = load_movie_posters(POSTERS_CSV, poster_file_mtime(POSTERS_CSV))
         for item in result["top_genres"]:
             genre = item["genre"]
             rows = result["genre_top_movies"].get(genre, [])
@@ -228,12 +296,14 @@ def render_movie_sections(result: Dict[str, Any]) -> None:
             for index, (col, row) in enumerate(zip(cols, rows), start=1):
                 with col:
                     with section_container():
-                        st.image(
-                            placeholder_image(f"{genre}-{row['title']}"),
-                            width="stretch",
-                        )
+                        title = str(row["title"])
+                        poster_url = posters.get(poster_lookup_key(title))
+                        if poster_url:
+                            render_poster_image(poster_url, title)
+                        else:
+                            render_empty_poster_slot()
                         st.caption(f"第 {index} 名")
-                        st.markdown(f"**{row['title']}**")
+                        st.markdown(f"**{title}**")
                         render_score_text(row["score"])
 
 
@@ -241,8 +311,8 @@ def render_process_explanation() -> None:
     with section_container():
         st.subheader("推薦產生方式")
         st.write("系統會根據您提供的基本資料，包括性別、年齡與職業，推估您可能的電影偏好。")
-        st.write(f"接著，系統會將這個偏好與電影資料進行比對，計算不同電影類型與電影項目的{SCORE_LABEL}。")
-        st.write(f"{SCORE_LABEL}較高的電影類型與電影，會被排序在較前面。")
+        st.write("接著，系統會將這個偏好與電影資料進行比對，計算不同電影類型與電影項目的建議分數。")
+        st.write("建議分數較高的電影類型與電影，會被排序在較前面。")
 
 
 def find_counterfactual(profile: Dict[str, Any]) -> Dict[str, Any]:
@@ -253,6 +323,7 @@ def find_counterfactual(profile: Dict[str, Any]) -> Dict[str, Any]:
     _, ages, occupations, _ = load_choices()
     gender = profile["gender"]
     age = int(profile["age"])
+    age_model = int(profile.get("age_model", age))
     occupation = int(profile["occupation"])
 
     for next_occupation in occupations:
@@ -260,7 +331,7 @@ def find_counterfactual(profile: Dict[str, Any]) -> Dict[str, Any]:
         if next_occupation == occupation:
             continue
 
-        changed_result = run_infer(gender, age, next_occupation)
+        changed_result = run_infer(gender, age_model, next_occupation)
         changed_top = top_genres_list(changed_result)
         if changed_top and changed_top[0][0] != base_top1:
             return {
@@ -269,11 +340,15 @@ def find_counterfactual(profile: Dict[str, Any]) -> Dict[str, Any]:
                 "original_profile": {
                     "gender_label": profile["gender_label"],
                     "age": age,
+                    "age_model": age_model,
+                    "age_display": profile.get("age_display", format_age_display(age, age_model)),
                     "occupation_label": profile["occupation_label"],
                 },
                 "changed_profile": {
                     "gender_label": profile["gender_label"],
                     "age": age,
+                    "age_model": age_model,
+                    "age_display": profile.get("age_display", format_age_display(age, age_model)),
                     "occupation_label": occupation_label(next_occupation),
                 },
                 "base_top1": base_top1,
@@ -282,7 +357,7 @@ def find_counterfactual(profile: Dict[str, Any]) -> Dict[str, Any]:
 
     for next_age in ages:
         next_age = int(next_age)
-        if next_age == age:
+        if next_age == age_model:
             continue
 
         changed_result = run_infer(gender, next_age, occupation)
@@ -294,11 +369,15 @@ def find_counterfactual(profile: Dict[str, Any]) -> Dict[str, Any]:
                 "original_profile": {
                     "gender_label": profile["gender_label"],
                     "age": age,
+                    "age_model": age_model,
+                    "age_display": profile.get("age_display", format_age_display(age, age_model)),
                     "occupation_label": profile["occupation_label"],
                 },
                 "changed_profile": {
                     "gender_label": profile["gender_label"],
                     "age": next_age,
+                    "age_model": next_age,
+                    "age_display": format_age_display(next_age, next_age),
                     "occupation_label": profile["occupation_label"],
                 },
                 "base_top1": base_top1,
@@ -338,8 +417,16 @@ def render_counterfactual_explanation(profile: Dict[str, Any]) -> None:
         original = cf["original_profile"]
         changed = cf["changed_profile"]
         changed_field = cf["changed_field"]
-        original_value = original["occupation_label"] if changed_field == "職業" else original["age"]
-        changed_value = changed["occupation_label"] if changed_field == "職業" else changed["age"]
+        original_value = (
+            original["occupation_label"]
+            if changed_field == "職業"
+            else original.get("age_display", str(original["age"]))
+        )
+        changed_value = (
+            changed["occupation_label"]
+            if changed_field == "職業"
+            else changed.get("age_display", str(changed["age"]))
+        )
 
         st.write(
             f"在目前結果中，如果將「{changed_field}」從 {original_value} 改為 {changed_value}，"
@@ -350,12 +437,12 @@ def render_counterfactual_explanation(profile: Dict[str, Any]) -> None:
         with cols[0]:
             st.markdown("**原始條件**")
             st.write(f"性別：{original['gender_label']}")
-            st.write(f"年齡：{original['age']}")
+            st.write(f"年齡：{original.get('age_display', original['age'])}")
             st.write(f"職業：{original['occupation_label']}")
         with cols[1]:
             st.markdown("**改變後條件**")
             st.write(f"性別：{changed['gender_label']}")
-            st.write(f"年齡：{changed['age']}")
+            st.write(f"年齡：{changed.get('age_display', changed['age'])}")
             st.write(f"職業：{changed['occupation_label']}")
 
         summary = pd.DataFrame(
@@ -393,23 +480,39 @@ def render_form_page() -> None:
 
     with st.form("profile_form"):
         gender_label = st.selectbox("性別", list(gender_reverse.keys()))
-        age = st.selectbox("年齡", ages, index=0)
+        age_text = st.text_input("年齡", value="", placeholder="請輸入年齡")
         selected_occupation_label = st.selectbox("職業", list(occupation_display.keys()), index=0)
         submitted = st.form_submit_button("開始觀看推薦介面")
 
     if submitted:
+        age_text = age_text.strip()
+        if not age_text:
+            st.warning("請輸入年齡。")
+            return
+        if not age_text.isdigit():
+            st.warning("年齡請輸入數字。")
+            return
+
+        age = int(age_text)
+        if age < 1 or age > 120:
+            st.warning("年齡請輸入 1 到 120 之間的數字。")
+            return
+
+        age_model = map_age_to_model_bucket(age, ages)
         gender = gender_reverse[gender_label]
         occupation = occupation_display[selected_occupation_label]
         profile = {
             "gender": gender,
             "gender_label": gender_label,
-            "age": int(age),
+            "age": age,
+            "age_model": age_model,
+            "age_display": format_age_display(age, age_model),
             "occupation": int(occupation),
             "occupation_label": selected_occupation_label,
         }
         result = run_infer(
             gender=profile["gender"],
-            age=profile["age"],
+            age=profile["age_model"],
             occupation=profile["occupation"],
         )
         version_order = generate_version_order()
