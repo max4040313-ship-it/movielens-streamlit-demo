@@ -9,6 +9,12 @@ import streamlit as st
 
 from movielens_cold_start import DemoEncoderSpec, infer_top_genres_for_new_user
 from movielens_train_mf import load_preprocess_artifacts
+from tmdb_candidate_pool import (
+    TMDB_CANDIDATE_POOL_CSV,
+    attach_tmdb_candidates,
+    candidate_pool_file_mtime,
+    load_tmdb_candidate_pool,
+)
 
 
 PREPROCESS_DIR = "artifacts/preprocess"
@@ -103,7 +109,6 @@ def init_session_state() -> None:
         "version_order": [],
         "label_mapping": {},
         "current_version_index": 0,
-        "survey_answers": {},
         "counterfactual_result": None,
     }
     for key, value in defaults.items():
@@ -118,7 +123,6 @@ def reset_experiment() -> None:
         "version_order",
         "label_mapping",
         "current_version_index",
-        "survey_answers",
         "counterfactual_result",
     ]:
         st.session_state.pop(key, None)
@@ -221,8 +225,13 @@ def load_movie_posters(path: str, modified_time: float) -> Dict[str, str]:
     return posters
 
 
+@st.cache_data
+def load_tmdb_candidates(path: str, modified_time: float) -> Dict[str, List[Dict[str, Any]]]:
+    return load_tmdb_candidate_pool(path=path, modified_time=modified_time)
+
+
 def run_infer(gender: str, age: int, occupation: int) -> Dict[str, Any]:
-    return infer_top_genres_for_new_user(
+    base_result = infer_top_genres_for_new_user(
         preprocess_dir=PREPROCESS_DIR,
         mf_model_dir=MF_MODEL_DIR,
         cold_start_dir=COLD_START_DIR,
@@ -232,6 +241,15 @@ def run_infer(gender: str, age: int, occupation: int) -> Dict[str, Any]:
         zip_prefix=None,
         top_m_pool=TOP_M_POOL,
         top_k_genres=TOP_K_GENRES,
+        top_n_movies_per_genre=TOP_N_MOVIES,
+    )
+    candidate_pool = load_tmdb_candidates(
+        TMDB_CANDIDATE_POOL_CSV,
+        candidate_pool_file_mtime(TMDB_CANDIDATE_POOL_CSV),
+    )
+    return attach_tmdb_candidates(
+        base_result,
+        candidate_pool,
         top_n_movies_per_genre=TOP_N_MOVIES,
     )
 
@@ -292,12 +310,17 @@ def render_movie_sections(result: Dict[str, Any]) -> None:
             rows = result["genre_top_movies"].get(genre, [])
 
             st.markdown(f"#### {genre}")
+            if not rows:
+                st.caption("目前這個類型沒有可顯示的 TMDb 電影。")
+                continue
             cols = st.columns(min(len(rows), TOP_N_MOVIES))
             for index, (col, row) in enumerate(zip(cols, rows), start=1):
                 with col:
                     with section_container():
                         title = str(row["title"])
-                        poster_url = posters.get(poster_lookup_key(title))
+                        poster_url = str(row.get("poster_url", "")).strip()
+                        if not poster_url:
+                            poster_url = posters.get(poster_lookup_key(title), "")
                         if poster_url:
                             render_poster_image(poster_url, title)
                         else:
@@ -310,9 +333,9 @@ def render_movie_sections(result: Dict[str, Any]) -> None:
 def render_process_explanation() -> None:
     with section_container():
         st.subheader("推薦產生方式")
-        st.write("系統會根據您提供的基本資料，包括性別、年齡與職業，推估您可能的電影偏好。")
-        st.write("接著，系統會將這個偏好與電影資料進行比對，計算不同電影類型與電影項目的建議分數。")
-        st.write("建議分數較高的電影類型與電影，會被排序在較前面。")
+        st.write("系統會先保留原本的 demographics 冷啟動模型，根據性別、年齡與職業推估您偏好的電影類型。")
+        st.write("接著，不再直接從舊 MovieLens 電影中挑片，而是依照預測出的 top genres，改從新的 TMDb 電影候選池中選出推薦電影。")
+        st.write("TMDb 候選池會優先保留年份較新、popularity 較高、vote_average 較高的電影，因此最後看到的片單會比舊資料更新。")
 
 
 def find_counterfactual(profile: Dict[str, Any]) -> Dict[str, Any]:
@@ -510,11 +533,19 @@ def render_form_page() -> None:
             "occupation": int(occupation),
             "occupation_label": selected_occupation_label,
         }
-        result = run_infer(
-            gender=profile["gender"],
-            age=profile["age_model"],
-            occupation=profile["occupation"],
-        )
+        try:
+            result = run_infer(
+                gender=profile["gender"],
+                age=profile["age_model"],
+                occupation=profile["occupation"],
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            st.error(
+                "找不到可用的 TMDb 候選電影池。請先執行 `python build_tmdb_candidate_pool.py`，"
+                "並設定 `TMDB_API_KEY` 或 `TMDB_API_READ_ACCESS_TOKEN`。"
+            )
+            st.caption(str(exc))
+            return
         version_order = generate_version_order()
 
         st.session_state.user_profile = profile
@@ -522,7 +553,6 @@ def render_form_page() -> None:
         st.session_state.version_order = version_order
         st.session_state.label_mapping = build_label_mapping(version_order)
         st.session_state.current_version_index = 0
-        st.session_state.survey_answers = {}
         st.session_state.counterfactual_result = None
         st.session_state.page = "recommendation"
         st.rerun()
@@ -550,83 +580,19 @@ def render_recommendation_page() -> None:
 
     st.divider()
     is_last = index >= len(version_order) - 1
-    button_text = "前往問卷" if is_last else "下一個介面"
+    button_text = "完成" if is_last else "下一個介面"
     if st.button(button_text, type="primary", key=f"recommendation_nav_{index}"):
         if is_last:
-            st.session_state.page = "survey"
+            st.session_state.page = "done"
         else:
             st.session_state.current_version_index = index + 1
         st.rerun()
 
 
-def rating_select(label: str, key: str) -> int:
-    return st.slider(label, min_value=1, max_value=7, value=4, key=key)
-
-
-def render_survey_page() -> None:
-    st.title("問卷填答")
-    st.caption("請根據剛才依序觀看的介面 A、介面 B、介面 C 進行比較與評分。")
-
-    label_options = [f"介面 {label}" for label in VERSION_LABELS]
-
-    with st.form("survey_form"):
-        st.subheader("整體比較")
-        favorite = st.radio("您最喜歡哪一個推薦介面？", label_options, horizontal=True)
-        easiest = st.radio("哪一個介面最容易理解？", label_options, horizontal=True)
-        trusted = st.radio("哪一個介面最值得信任？", label_options, horizontal=True)
-        acceptance_pick = st.radio(
-            "哪一個介面最能提升您接受推薦的意願？",
-            label_options,
-            horizontal=True,
-        )
-        future_use = st.radio(
-            "若未來實際使用電影推薦系統，您最希望看到哪一個介面版本？",
-            label_options,
-            horizontal=True,
-        )
-
-        st.subheader("個別介面評分")
-        ratings: Dict[str, Dict[str, int]] = {}
-        for label in VERSION_LABELS:
-            st.markdown(f"#### 介面 {label}")
-            ratings[label] = {
-                "understanding": rating_select(
-                    "我能理解此推薦系統如何產生推薦結果。",
-                    f"rating_{label}_understanding",
-                ),
-                "trust": rating_select(
-                    "我信任此推薦系統提供的推薦結果。",
-                    f"rating_{label}_trust",
-                ),
-                "acceptance": rating_select(
-                    "我願意參考此系統的推薦結果來選擇電影。",
-                    f"rating_{label}_acceptance",
-                ),
-            }
-
-        comment = st.text_area("其他意見（選填）")
-        submitted = st.form_submit_button("送出問卷")
-
-    if submitted:
-        st.session_state.survey_answers = {
-            "favorite_interface": favorite.replace("介面 ", ""),
-            "easiest_to_understand": easiest.replace("介面 ", ""),
-            "most_trusted": trusted.replace("介面 ", ""),
-            "most_willing_to_accept": acceptance_pick.replace("介面 ", ""),
-            "preferred_for_future_use": future_use.replace("介面 ", ""),
-            "ratings": ratings,
-            "comment": comment,
-            "version_order": st.session_state.version_order,
-            "label_mapping": st.session_state.label_mapping,
-        }
-        st.session_state.page = "done"
-        st.rerun()
-
-
 def render_done_page() -> None:
-    st.title("填答完成")
-    st.success("感謝您的參與。您的問卷答案已暫存在本次瀏覽工作階段中。")
-    st.caption("目前版本尚未寫入 CSV 或資料庫。")
+    st.title("推薦瀏覽完成")
+    st.success("您已看完這次的推薦結果。")
+    st.caption("若要重新輸入條件並查看新的推薦，可以直接重新開始。")
 
     if st.button("重新開始"):
         reset_experiment()
@@ -638,9 +604,7 @@ if st.session_state.page == "form":
     render_form_page()
 elif st.session_state.page == "recommendation":
     render_recommendation_page()
-elif st.session_state.page == "survey":
-    render_survey_page()
-elif st.session_state.page == "done":
+elif st.session_state.page in {"survey", "done"}:
     render_done_page()
 else:
     reset_experiment()
