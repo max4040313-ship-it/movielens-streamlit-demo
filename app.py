@@ -100,9 +100,8 @@ def map_age_to_model_bucket(age: int, supported_ages: List[int]) -> int:
 
 
 def format_age_display(age: int, model_age: int) -> str:
-    if int(age) == int(model_age):
-        return str(int(age))
-    return f"{int(age)}\uff08\u6a21\u578b\u4f7f\u7528\u5e74\u9f61\u5206\u7d44\uff1a{int(model_age)}\uff09"
+    del model_age
+    return str(int(age))
 
 
 def init_session_state() -> None:
