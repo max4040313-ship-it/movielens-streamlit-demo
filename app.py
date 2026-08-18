@@ -140,6 +140,13 @@ def top_genres_list(result: Dict[str, Any]) -> List[Tuple[str, float]]:
     return [(item["genre"], float(item["score"])) for item in result["top_genres"]]
 
 
+def top_genre_item(result: Dict[str, Any]) -> Tuple[str, float]:
+    genre_items = top_genres_list(result)
+    if not genre_items:
+        return ("目前無推薦類型", 0.0)
+    return genre_items[0]
+
+
 def format_score(score: float) -> str:
     return f"{float(score):.1f}"
 
@@ -262,6 +269,7 @@ def generate_version_order() -> List[str]:
 
 
 def render_header(interface_label: Optional[str] = None) -> None:
+    del interface_label
     st.title("\u60a8\u7684\u96fb\u5f71\u63a8\u85a6\u7d50\u679c")
     st.caption(
         "\u4ee5\u4e0b\u662f\u7cfb\u7d71\u6839\u64da\u60a8\u63d0\u4f9b\u7684\u57fa\u672c\u8cc7\u6599\u6240\u7522\u751f\u7684\u96fb\u5f71\u63a8\u85a6\u5167\u5bb9\u3002"
@@ -287,23 +295,51 @@ def render_genre_recommendations(result: Dict[str, Any]) -> None:
     with section_container():
         st.subheader("\u96fb\u5f71\u63a8\u85a6\u985e\u578b")
         genre_items = top_genres_list(result)
+        if not genre_items:
+            st.caption("\u76ee\u524d\u6c92\u6709\u53ef\u986f\u793a\u7684\u63a8\u85a6\u985e\u578b\u3002")
+            return
         cols = st.columns(len(genre_items))
-        for col, (genre, score) in zip(cols, genre_items):
+        for index, (col, (genre, score)) in enumerate(zip(cols, genre_items), start=1):
             with col:
-                with section_container():
-                    st.markdown(f"**{genre}**")
-                    render_score_text(score)
+                if index == 1:
+                    st.markdown(
+                        f"""
+                        <div style="border:2px solid #2563eb;border-radius:0.5rem;padding:1rem;background:#eff6ff;">
+                            <div style="font-weight:700;margin-bottom:0.75rem;">
+                                {escape(genre)}
+                                <span style="font-size:0.85rem;color:#1d4ed8;font-weight:600;margin-left:0.35rem;">
+                                    \u6700\u9ad8\u63a8\u85a6
+                                </span>
+                            </div>
+                            <div style="font-weight:600;">
+                                \u5efa\u8b70\u5206\u6578\uff1a{escape(format_score(score))}
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    with section_container():
+                        st.markdown(f"**{genre}**")
+                        render_score_text(score)
 
 
 def render_movie_sections(result: Dict[str, Any]) -> None:
     with section_container():
         st.subheader("\u96fb\u5f71\u63a8\u85a6\u6e05\u55ae")
         posters = load_movie_posters(POSTERS_CSV, poster_file_mtime(POSTERS_CSV))
+        top_genre, _ = top_genre_item(result)
         for item in result["top_genres"]:
             genre = item["genre"]
             rows = result["genre_top_movies"].get(genre, [])
 
-            st.markdown(f"#### {genre}")
+            if genre == top_genre:
+                st.markdown(
+                    f"#### {genre} <span style='font-size:0.9rem;color:#6b7280;font-weight:400;'>\u6700\u9ad8\u63a8\u85a6\u985e\u578b</span>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(f"#### {genre}")
             if not rows:
                 st.caption("\u76ee\u524d\u6c92\u6709\u53ef\u986f\u793a\u7684\u5019\u9078\u96fb\u5f71\u3002")
                 continue
@@ -327,15 +363,14 @@ def render_movie_sections(result: Dict[str, Any]) -> None:
 
 def render_process_explanation() -> None:
     with section_container():
-        st.subheader("\u63a8\u85a6\u6d41\u7a0b\u8aaa\u660e")
-        st.write(
-            "\u7cfb\u7d71\u6703\u5148\u6839\u64da\u60a8\u7684\u6027\u5225\u3001\u5e74\u9f61\u8207\u8077\u696d\uff0c\u63a8\u4f30\u60a8\u53ef\u80fd\u504f\u597d\u7684\u96fb\u5f71\u985e\u578b\u3002"
+        st.subheader("\u7cfb\u7d71\u5982\u4f55\u7522\u751f\u63a8\u85a6")
+        st.markdown(
+            "- \u6839\u64da\u60a8\u8f38\u5165\u7684\u6027\u5225\u3001\u5e74\u9f61\u8207\u8077\u696d\uff0c\u5148\u63a8\u4f30\u53ef\u80fd\u504f\u597d\u7684\u96fb\u5f71\u985e\u578b\u3002\n"
+            "- \u518d\u4f9d\u51b7\u555f\u52d5\u6a21\u578b\u627e\u51fa\u5206\u6578\u8f03\u9ad8\u7684\u63a8\u85a6\u985e\u578b\u3002\n"
+            "- \u6700\u5f8c\u5f9e\u8f03\u65b0\u7684 TMDb \u5019\u9078\u96fb\u5f71\u4e2d\u6311\u9078\u5404\u985e\u578b\u7684\u4ee3\u8868\u4f5c\u54c1\u3002"
         )
-        st.write(
-            "\u63a5\u8457\uff0c\u7cfb\u7d71\u6703\u53c3\u8003\u539f\u672c\u7684\u51b7\u555f\u52d5\u6a21\u578b\u7522\u751f top genres\uff0c\u518d\u5f9e\u65b0\u7684 TMDb \u5019\u9078\u96fb\u5f71\u4e2d\u6311\u9078\u4ee3\u8868\u4f5c\u54c1\u3002"
-        )
-        st.write(
-            "TMDb \u5019\u9078\u96fb\u5f71\u6703\u512a\u5148\u4f9d\u7167\u5e74\u4efd\u8f03\u65b0\u3001popularity \u8f03\u9ad8\u3001vote_average \u8f03\u9ad8\u7684\u689d\u4ef6\u9032\u884c\u7be9\u9078\u3002"
+        st.caption(
+            "TMDb \u5019\u9078\u96fb\u5f71\u6703\u512a\u5148\u8003\u91cf\u5e74\u4efd\u8f03\u65b0\u3001popularity \u8f03\u9ad8\u8207 vote_average \u8f03\u9ad8\u7684\u4f5c\u54c1\u3002"
         )
 
 
@@ -428,25 +463,12 @@ def render_counterfactual_explanation(profile: Dict[str, Any]) -> None:
     cf = get_counterfactual_result(profile)
 
     with section_container():
-        st.subheader("\u53cd\u4e8b\u5be6\u89e3\u91cb")
-        st.write(
-            "\u9019\u500b\u5340\u584a\u7528\u4f86\u8aaa\u660e\uff1a\u5982\u679c\u53ea\u6539\u8b8a\u4e00\u500b\u689d\u4ef6\uff0c\u7b2c\u4e00\u63a8\u85a6\u985e\u578b\u662f\u5426\u6703\u8ddf\u8457\u6539\u8b8a\u3002"
-        )
+        st.subheader("反事實解釋")
 
         if not cf["found"]:
-            st.write(
-                "\u5728\u76ee\u524d\u53ef\u6aa2\u67e5\u7684\u55ae\u4e00\u689d\u4ef6\u8b8a\u52d5\u4e0b\uff0c\u60a8\u7684\u7b2c\u4e00\u63a8\u85a6\u985e\u578b\u7dad\u6301\u4e0d\u8b8a\uff0c\u8868\u793a\u9019\u6b21\u63a8\u85a6\u7d50\u679c\u76f8\u5c0d\u7a69\u5b9a\u3002"
+            st.info(
+                "在目前可檢查的單一條件變動下，您的第一推薦類型維持不變，表示這次推薦結果相對穩定。"
             )
-            summary = pd.DataFrame(
-                [
-                    {"\u9805\u76ee": "\u76ee\u524d\u7b2c\u4e00\u63a8\u85a6\u985e\u578b", "\u5167\u5bb9": cf["base_top1"]},
-                    {
-                        "\u9805\u76ee": "\u53cd\u4e8b\u5be6\u7d50\u679c",
-                        "\u5167\u5bb9": "\u5728\u55ae\u4e00\u689d\u4ef6\u8b8a\u52d5\u4e0b\uff0c\u7b2c\u4e00\u63a8\u85a6\u985e\u578b\u7dad\u6301\u4e0d\u8b8a",
-                    },
-                ]
-            )
-            st.table(summary)
             return
 
         original = cf["original_profile"]
@@ -463,124 +485,31 @@ def render_counterfactual_explanation(profile: Dict[str, Any]) -> None:
             else changed.get("age_display", str(changed["age"]))
         )
 
-        st.write(
-            f"\u5982\u679c\u53ea\u6539\u8b8a\u60a8\u7684{field_label}\uff0c\u5f9e\u300c{original_value}\u300d\u8b8a\u6210\u300c{changed_value}\u300d\uff0c"
-            f"\u7b2c\u4e00\u63a8\u85a6\u985e\u578b\u6703\u5f9e\u300c{cf['base_top1']}\u300d\u6539\u70ba\u300c{cf['changed_top1']}\u300d\u3002"
+        st.info(
+            f"如果只改變您的{field_label}，從「{original_value}」變成「{changed_value}」，"
+            f"第一推薦類型會從「{cf['base_top1']}」改為「{cf['changed_top1']}」。"
         )
 
-        cols = st.columns(2)
-        with cols[0]:
-            st.markdown("**\u539f\u59cb\u689d\u4ef6**")
-            st.write(f"\u6027\u5225\uff1a{original['gender_label']}")
-            st.write(f"\u5e74\u9f61\uff1a{original.get('age_display', original['age'])}")
-            st.write(f"\u8077\u696d\uff1a{original['occupation_label']}")
-        with cols[1]:
-            st.markdown("**\u6539\u8b8a\u5f8c\u689d\u4ef6**")
-            st.write(f"\u6027\u5225\uff1a{changed['gender_label']}")
-            st.write(f"\u5e74\u9f61\uff1a{changed.get('age_display', changed['age'])}")
-            st.write(f"\u8077\u696d\uff1a{changed['occupation_label']}")
+        with st.expander("查看條件比較", expanded=False):
+            cols = st.columns(2)
+            with cols[0]:
+                st.markdown("**原始條件**")
+                st.write(f"性別：{original['gender_label']}")
+                st.write(f"年齡：{original.get('age_display', original['age'])}")
+                st.write(f"職業：{original['occupation_label']}")
+            with cols[1]:
+                st.markdown("**改變後條件**")
+                st.write(f"性別：{changed['gender_label']}")
+                st.write(f"年齡：{changed.get('age_display', changed['age'])}")
+                st.write(f"職業：{changed['occupation_label']}")
 
-        summary = pd.DataFrame(
-            [
-                {"\u9805\u76ee": "\u539f\u59cb\u7b2c\u4e00\u63a8\u85a6\u985e\u578b", "\u5167\u5bb9": cf["base_top1"]},
-                {"\u9805\u76ee": "\u6539\u8b8a\u5f8c\u7b2c\u4e00\u63a8\u85a6\u985e\u578b", "\u5167\u5bb9": cf["changed_top1"]},
-            ]
-        )
-        st.table(summary)
-
-
-def render_high_transparency_preview_page(profile: Dict[str, Any], result: Dict[str, Any]) -> None:
-    cf = get_counterfactual_result(profile)
-    top_genres = top_genres_list(result)
-    top_genre = top_genres[0][0] if top_genres else "\u76ee\u524d\u7121\u63a8\u85a6\u985e\u578b"
-
-    with section_container():
-        st.subheader("\u96fb\u5f71\u63a8\u85a6\u985e\u578b")
-        cols = st.columns(len(top_genres))
-        for col, (genre, score) in zip(cols, top_genres):
-            with col:
-                with section_container():
-                    st.markdown(f"**{genre}**")
-                    render_score_text(score)
-
-    with section_container():
-        st.subheader("\u96fb\u5f71\u63a8\u85a6\u6e05\u55ae")
-        posters = load_movie_posters(POSTERS_CSV, poster_file_mtime(POSTERS_CSV))
-        for item in result["top_genres"]:
-            genre = item["genre"]
-            rows = result["genre_top_movies"].get(genre, [])
-            if genre == top_genre:
-                st.markdown(
-                    f"#### {genre} <span style='font-size:0.9rem;color:#6b7280;font-weight:400;'>\u76ee\u524d\u5206\u6578\u6700\u9ad8\u7684\u63a8\u85a6\u985e\u578b</span>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(f"#### {genre}")
-
-            if not rows:
-                st.caption("\u76ee\u524d\u6c92\u6709\u53ef\u986f\u793a\u7684\u5019\u9078\u96fb\u5f71\u3002")
-                continue
-
-            cols = st.columns(min(len(rows), TOP_N_MOVIES))
-            for movie_index, (col, row) in enumerate(zip(cols, rows), start=1):
-                with col:
-                    with section_container():
-                        title = str(row["title"])
-                        poster_url = str(row.get("poster_url", "")).strip()
-                        if not poster_url:
-                            poster_url = posters.get(poster_lookup_key(title), "")
-                        if poster_url:
-                            render_poster_image(poster_url, title)
-                        else:
-                            render_empty_poster_slot()
-                        st.caption(f"Top {movie_index}")
-                        st.markdown(f"**{title}**")
-                        render_score_text(row["score"])
-
-    with section_container():
-        st.subheader("\u63a8\u85a6\u539f\u56e0")
-        st.write(
-            "\u7cfb\u7d71\u6703\u5148\u6839\u64da\u60a8\u7684\u6027\u5225\u3001\u5e74\u9f61\u8207\u8077\u696d\u63a8\u4f30\u504f\u597d\uff0c\u518d\u4f9d\u64da\u5206\u6578\u627e\u51fa\u6700\u9069\u5408\u7684\u96fb\u5f71\u985e\u578b\u3002"
-        )
-        st.write(
-            "\u63a5\u8457\u518d\u5f9e\u8f03\u65b0\u7684 TMDb \u96fb\u5f71\u5019\u9078\u6c60\u4e2d\uff0c\u6311\u51fa\u5404\u985e\u578b\u4e0b\u6700\u5177\u4ee3\u8868\u6027\u7684\u96fb\u5f71\u4f5c\u70ba\u5c55\u793a\u7d50\u679c\u3002"
-        )
-
-        with st.expander("\u67e5\u770b\u5b8c\u6574\u53cd\u4e8b\u5be6\u89e3\u91cb", expanded=False):
-            if not cf["found"]:
-                st.write(
-                    "\u5728\u76ee\u524d\u53ef\u6aa2\u67e5\u7684\u55ae\u4e00\u689d\u4ef6\u8b8a\u52d5\u4e0b\uff0c\u60a8\u7684\u7b2c\u4e00\u63a8\u85a6\u985e\u578b\u7dad\u6301\u4e0d\u8b8a\uff0c\u8868\u793a\u9019\u6b21\u63a8\u85a6\u7d50\u679c\u76f8\u5c0d\u7a69\u5b9a\u3002"
-                )
-            else:
-                original = cf["original_profile"]
-                changed = cf["changed_profile"]
-                field_label = changed_field_label(cf["changed_field"])
-                original_value = (
-                    original["occupation_label"]
-                    if cf["changed_field"] == "occupation"
-                    else original.get("age_display", str(original["age"]))
-                )
-                changed_value = (
-                    changed["occupation_label"]
-                    if cf["changed_field"] == "occupation"
-                    else changed.get("age_display", str(changed["age"]))
-                )
-                st.write(
-                    f"\u82e5\u53ea\u6539\u8b8a\u60a8\u7684{field_label}\uff0c\u5f9e\u300c{original_value}\u300d\u8b8a\u6210\u300c{changed_value}\u300d\uff0c"
-                    f"\u7b2c\u4e00\u63a8\u85a6\u985e\u578b\u6703\u5f9e\u300c{cf['base_top1']}\u300d\u6539\u70ba\u300c{cf['changed_top1']}\u300d\u3002"
-                )
-
-                detail_cols = st.columns(2)
-                with detail_cols[0]:
-                    st.markdown("**\u539f\u59cb\u689d\u4ef6**")
-                    st.write(f"\u6027\u5225\uff1a{original['gender_label']}")
-                    st.write(f"\u5e74\u9f61\uff1a{original.get('age_display', original['age'])}")
-                    st.write(f"\u8077\u696d\uff1a{original['occupation_label']}")
-                with detail_cols[1]:
-                    st.markdown("**\u6539\u8b8a\u5f8c\u689d\u4ef6**")
-                    st.write(f"\u6027\u5225\uff1a{changed['gender_label']}")
-                    st.write(f"\u5e74\u9f61\uff1a{changed.get('age_display', changed['age'])}")
-                    st.write(f"\u8077\u696d\uff1a{changed['occupation_label']}")
+            summary = pd.DataFrame(
+                [
+                    {"項目": "原始第一推薦類型", "內容": cf["base_top1"]},
+                    {"項目": "改變後第一推薦類型", "內容": cf["changed_top1"]},
+                ]
+            )
+            st.table(summary)
 
 
 def render_explanation(version_type: str, profile: Dict[str, Any]) -> None:
@@ -678,7 +607,6 @@ def render_recommendation_page() -> None:
     result = st.session_state.recommendation_result
     index = st.session_state.current_version_index
     version_order = st.session_state.version_order
-    high_preview_index = len(version_order)
 
     if not profile or result is None or not version_order:
         st.warning(
@@ -688,21 +616,20 @@ def render_recommendation_page() -> None:
             reset_experiment()
         return
 
-    if index < len(version_order):
-        interface_label = VERSION_LABELS[index]
-        version_type = version_order[index]
-        render_header(interface_label)
-        render_profile_summary(profile)
-        render_genre_recommendations(result)
-        render_movie_sections(result)
-        render_explanation(version_type, profile)
-    else:
-        render_header("\u9ad8\u900f\u660e\u5ea6\u8ffd\u52a0\u9801")
-        render_profile_summary(profile)
-        render_high_transparency_preview_page(profile, result)
+    if index >= len(version_order):
+        st.session_state.page = "done"
+        st.rerun()
+
+    interface_label = VERSION_LABELS[index]
+    version_type = version_order[index]
+    render_header(interface_label)
+    render_profile_summary(profile)
+    render_genre_recommendations(result)
+    render_explanation(version_type, profile)
+    render_movie_sections(result)
 
     st.divider()
-    is_last = index >= high_preview_index
+    is_last = index == len(version_order) - 1
     button_text = "\u5b8c\u6210" if is_last else "\u4e0b\u4e00\u9801"
     if st.button(button_text, type="primary", key=f"recommendation_nav_{index}"):
         if is_last:
