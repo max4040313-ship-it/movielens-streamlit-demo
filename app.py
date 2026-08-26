@@ -324,10 +324,33 @@ def render_genre_recommendations(result: Dict[str, Any]) -> None:
                         render_score_text(score)
 
 
-def render_movie_sections(result: Dict[str, Any]) -> None:
+def render_movie_sections(result: Dict[str, Any], show_ranking_context: bool = True) -> None:
     with section_container():
         st.subheader("\u96fb\u5f71\u63a8\u85a6\u6e05\u55ae")
         posters = load_movie_posters(POSTERS_CSV, poster_file_mtime(POSTERS_CSV))
+
+        if not show_ranking_context:
+            movies = [
+                row
+                for item in result["top_genres"]
+                for row in result["genre_top_movies"].get(item["genre"], [])[:TOP_N_MOVIES]
+            ]
+            for start in range(0, len(movies), TOP_N_MOVIES):
+                cols = st.columns(min(len(movies) - start, TOP_N_MOVIES))
+                for col, row in zip(cols, movies[start : start + TOP_N_MOVIES]):
+                    with col:
+                        with section_container():
+                            title = str(row["title"])
+                            poster_url = str(row.get("poster_url", "")).strip()
+                            if not poster_url:
+                                poster_url = posters.get(poster_lookup_key(title), "")
+                            if poster_url:
+                                render_poster_image(poster_url, title)
+                            else:
+                                render_empty_poster_slot()
+                            st.markdown(f"**{title}**")
+            return
+
         top_genre, _ = top_genre_item(result)
         for item in result["top_genres"]:
             genre = item["genre"]
@@ -513,10 +536,8 @@ def render_counterfactual_explanation(profile: Dict[str, Any]) -> None:
 
 
 def render_explanation(version_type: str, profile: Dict[str, Any]) -> None:
-    if version_type == "low":
-        return
-    render_process_explanation()
     if version_type == "high":
+        render_process_explanation()
         render_counterfactual_explanation(profile)
 
 
@@ -624,9 +645,10 @@ def render_recommendation_page() -> None:
     version_type = version_order[index]
     render_header(interface_label)
     render_profile_summary(profile)
-    render_genre_recommendations(result)
+    if version_type != "low":
+        render_genre_recommendations(result)
     render_explanation(version_type, profile)
-    render_movie_sections(result)
+    render_movie_sections(result, show_ranking_context=version_type != "low")
 
     st.divider()
     is_last = index == len(version_order) - 1
