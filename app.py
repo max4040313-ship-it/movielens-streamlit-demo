@@ -469,6 +469,8 @@ def find_counterfactual(profile: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "found": False,
         "base_top1": base_top1,
+        "checked_occupation_count": max(len(occupations) - 1, 0),
+        "checked_age_count": max(len(ages) - 1, 0),
     }
 
 
@@ -486,12 +488,34 @@ def render_counterfactual_explanation(profile: Dict[str, Any]) -> None:
     cf = get_counterfactual_result(profile)
 
     with section_container():
-        st.subheader("反事實解釋")
-
         if not cf["found"]:
-            st.info(
-                "在目前可檢查的單一條件變動下，您的第一推薦類型維持不變，表示這次推薦結果相對穩定。"
-            )
+            st.subheader("推薦穩定性檢視")
+            condition_col, genre_col, result_col = st.columns(3)
+            with condition_col:
+                st.caption("已檢查條件")
+                st.markdown("**職業、年齡**")
+            with genre_col:
+                st.caption("第一推薦類型")
+                st.markdown(f"**{cf['base_top1']}**")
+            with result_col:
+                st.caption("檢視結果")
+                st.markdown("**維持不變**")
+
+            with st.expander("查看檢查細節", expanded=False):
+                st.write(
+                    "系統在性別維持不變的情況下，已分別檢查職業與年齡的單一條件變動。"
+                )
+                st.write(
+                    f"職業變動：檢查 {cf['checked_occupation_count']} 種其他職業後，"
+                    f"第一推薦類型皆維持為 {cf['base_top1']}。"
+                )
+                st.write(
+                    f"年齡變動：檢查 {cf['checked_age_count']} 個其他年齡分組後，"
+                    f"第一推薦類型皆維持為 {cf['base_top1']}。"
+                )
+                st.caption(
+                    "在目前可檢查的單一條件變動下，推薦結果相對穩定。"
+                )
             return
 
         original = cf["original_profile"]
@@ -508,12 +532,24 @@ def render_counterfactual_explanation(profile: Dict[str, Any]) -> None:
             else changed.get("age_display", str(changed["age"]))
         )
 
-        st.info(
-            f"如果只改變您的{field_label}，從「{original_value}」變成「{changed_value}」，"
-            f"第一推薦類型會從「{cf['base_top1']}」改為「{cf['changed_top1']}」。"
-        )
+        st.subheader("條件變動比較")
+        condition_col, genre_col, result_col = st.columns(3)
+        with condition_col:
+            st.caption("變動條件")
+            st.markdown(f"**{field_label}**")
+        with genre_col:
+            st.caption("條件變動")
+            st.markdown(f"**{original_value} → {changed_value}**")
+        with result_col:
+            st.caption("第一推薦類型")
+            st.markdown(f"**{cf['base_top1']} → {cf['changed_top1']}**")
 
         with st.expander("查看條件比較", expanded=False):
+            st.write(
+                f"在其他條件維持不變時，若{field_label}由「{original_value}」"
+                f"改為「{changed_value}」，第一推薦類型會由「{cf['base_top1']}」"
+                f"改為「{cf['changed_top1']}」。"
+            )
             cols = st.columns(2)
             with cols[0]:
                 st.markdown("**原始條件**")
@@ -525,14 +561,6 @@ def render_counterfactual_explanation(profile: Dict[str, Any]) -> None:
                 st.write(f"性別：{changed['gender_label']}")
                 st.write(f"年齡：{changed.get('age_display', changed['age'])}")
                 st.write(f"職業：{changed['occupation_label']}")
-
-            summary = pd.DataFrame(
-                [
-                    {"項目": "原始第一推薦類型", "內容": cf["base_top1"]},
-                    {"項目": "改變後第一推薦類型", "內容": cf["changed_top1"]},
-                ]
-            )
-            st.table(summary)
 
 
 def render_explanation(version_type: str, profile: Dict[str, Any]) -> None:
