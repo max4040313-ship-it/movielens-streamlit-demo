@@ -385,16 +385,42 @@ def render_movie_sections(result: Dict[str, Any], show_ranking_context: bool = T
 
 
 def render_process_explanation() -> None:
-    with section_container():
-        st.subheader("\u7cfb\u7d71\u5982\u4f55\u7522\u751f\u63a8\u85a6")
+    st.subheader("推薦依據")
+    st.caption("系統依下列步驟產生本次推薦結果。")
+
+    first_step, first_arrow, second_step, second_arrow, third_step = st.columns(
+        [5, 1, 5, 1, 5]
+    )
+
+    with first_step:
+        with section_container():
+            st.caption("步驟 1")
+            st.markdown("**基本資料**")
+            st.caption("依您填寫的性別、年齡與職業作為推薦依據。")
+
+    with first_arrow:
         st.markdown(
-            "- \u6839\u64da\u60a8\u8f38\u5165\u7684\u6027\u5225\u3001\u5e74\u9f61\u8207\u8077\u696d\uff0c\u5148\u63a8\u4f30\u53ef\u80fd\u504f\u597d\u7684\u96fb\u5f71\u985e\u578b\u3002\n"
-            "- \u518d\u4f9d\u51b7\u555f\u52d5\u6a21\u578b\u627e\u51fa\u5206\u6578\u8f03\u9ad8\u7684\u63a8\u85a6\u985e\u578b\u3002\n"
-            "- \u6700\u5f8c\u5f9e\u8f03\u65b0\u7684 TMDb \u5019\u9078\u96fb\u5f71\u4e2d\u6311\u9078\u5404\u985e\u578b\u7684\u4ee3\u8868\u4f5c\u54c1\u3002"
+            "<div style='font-size:2rem;text-align:center;padding-top:2.1rem;'>→</div>",
+            unsafe_allow_html=True,
         )
-        st.caption(
-            "TMDb \u5019\u9078\u96fb\u5f71\u6703\u512a\u5148\u8003\u91cf\u5e74\u4efd\u8f03\u65b0\u3001popularity \u8f03\u9ad8\u8207 vote_average \u8f03\u9ad8\u7684\u4f5c\u54c1\u3002"
+
+    with second_step:
+        with section_container():
+            st.caption("步驟 2")
+            st.markdown("**偏好類型預測**")
+            st.caption("冷啟動模型推估偏好，產生各電影類型的推薦分數。")
+
+    with second_arrow:
+        st.markdown(
+            "<div style='font-size:2rem;text-align:center;padding-top:2.1rem;'>→</div>",
+            unsafe_allow_html=True,
         )
+
+    with third_step:
+        with section_container():
+            st.caption("步驟 3")
+            st.markdown("**TMDb 代表電影**")
+            st.caption("從各推薦類型的候選電影中呈現代表作品。")
 
 
 def find_counterfactual(profile: Dict[str, Any]) -> Dict[str, Any]:
